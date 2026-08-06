@@ -1,34 +1,32 @@
 #!/usr/bin/env python3
 """
-Carton Sticker Generator
-========================
-Reads a company PO Excel file (Ratio or Solid format), extracts sticker data
-from every sheet, and generates a print-ready PDF where each sticker design is
-repeated N times per page based on carton Height (H):
+Carton Sticker Generator — core engine.
 
-    H <= 18  -> 8 copies per page
-    H <= 26  -> 4 copies per page
-    H <= 30  -> 2 copies per page
-    otherwise -> 1 copy per page
-
-Also writes a summary Excel listing every design, its H, copies, and qty.
+The drawing for each sheet type lives in its OWN file so each can be edited
+independently:
+    layout_eight.py — 8-copy sheet  (sticker 4"   x 2.5")
+    layout_four.py  — 4-copy sheet  (sticker 4.1" x 5")
+    layout_two.py   — 2-copy sheet  (sticker 5"   x 5")
+    layout_one.py   — 1-copy sheet  (sticker 6"   x 6")
+Shared settings (font, oval, right-shift, letter in the oval) are in common.py.
 
 Usage:
-    python sticker_generator.py <po_file.xlsx> [more_po_files.xlsx ...]
-
-Edit COPY_RULES below if the height thresholds change.
+    python sticker_generator.py <po_file.xlsx> [more.xlsx ...]
 """
 
-import sys, re, os
+import sys, re, os, math
+import zipfile
 import openpyxl
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
+import layout_eight, layout_four, layout_two, layout_one
+import common
+from common import FONT, TEXT_HSCALE, CIRCLE_LETTER  # re-export for app use
+
 # ----------------------------------------------------------------------
-# CONFIG — edit these if company rules change
-# ----------------------------------------------------------------------
-# (max_height_cm, copies). Checked top-down; first match wins.
+# Which layout for which carton Height (cm). Checked top-down.
 COPY_RULES = [
     (18, 8),
     (26, 4),
@@ -36,72 +34,12 @@ COPY_RULES = [
     (9999, 1),
 ]
 
-# Exact size of ONE sticker for each copy count: copies -> (width_in, height_in)
-STICKER_SIZE_IN = {
-    8: (4.0, 2.5),
-    4: (4.1, 5.0),
-    2: (5.0, 5.0),
-    1: (6.0, 6.0),
-}
+LAYOUTS = {8: layout_eight, 4: layout_four, 2: layout_two, 1: layout_one}
 
-# Letter shown inside the circle on the volume line (changes per PO: D, C, ...)
-CIRCLE_LETTER = "D"
+PAGE_SIZE = A4
 
-# Horizontal width of the text as a percentage. 100 = normal Arial width.
-# 82 makes the text narrower (same height) to match the original stickers,
-# e.g. a line that printed 11 cm wide becomes 9 cm wide.
-TEXT_HSCALE = 82
-
-# Exact text heights in INCHES for the 2-copy (5" x 5") sticker.
-# Change these numbers to resize each line.
-# Exact text WIDTHS in INCHES for the 4-copy sticker. Each line is stretched
-# or compressed horizontally to exactly this width (heights come from
-# FOUR_COPY_LINE_H). "vol" is the width of the "(0.037M3)" part only —
-# the rest of that line scales along with it.
-FOUR_COPY_LINE_W = {
-    "dest": 1.210,
-    "item": 2.933,
-    "code": 1.700,
-    "vol":  1.512,
-}
-
-# Exact text heights in INCHES for the 4-copy (4.1" x 5") sticker.
-FOUR_COPY_LINE_H = {
-    "dest": 0.470,   # 1st line: 8465/EU (printed only in Phase 3)
-    "item": 0.523,   # 2nd line: 341-489933(71-06)
-    "code": 0.410,   # 3rd line: 09-004-000
-    "vol":  0.525,   # 4th line: (0.059M3) D 16 PCS  (right-aligned)
-    "desc": 0.650,   # 5th line: description — ends at the bracket of the
-                     #           4th line, never goes before it
-}
-
-TWO_COPY_LINE_H = {
-    "dest": 0.530,   # extra top line (e.g. 8411/SG) — printed only in Phase 3
-    "item": 0.500,   # 1st line: 341-489933(71-06)
-    "code": 0.450,   # 2nd line: 09-004-000
-    "vol":  0.700,   # 3rd line: (0.059M3) D 16 PCS  (right-aligned)
-    "desc": 0.700,   # 4th line: description, same height as 3rd line
-                     #           (shrinks automatically if too wide)
-}
-
-# ---- Font: use real Arial Bold if available (Windows), else Helvetica-Bold ----
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-
-FONT = "Helvetica-Bold"
-for _p in (r"C:\Windows\Fonts\arialbd.ttf",
-           r"C:\Windows\Fonts\ARIALBD.TTF",
-           "/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf",
-           "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"):
-    if os.path.exists(_p):
-        try:
-            pdfmetrics.registerFont(TTFont("Arial-Bold", _p))
-            FONT = "Arial-Bold"
-            break
-        except Exception:
-            pass
-
-PAGE_SIZE = A4  # print sheet size
+# Each carton needs this many identical stickers (2 = one per side, etc.)
+STICKERS_PER_CARTON = 2
 
 def copies_for_height(h):
     for max_h, copies in COPY_RULES:
@@ -109,9 +47,6 @@ def copies_for_height(h):
             return copies
     return 1
 
-# ----------------------------------------------------------------------
-# PARSING
-# ----------------------------------------------------------------------
 MEAS_RE = re.compile(r"L\s*(\d+(?:\.\d+)?)\s*X\s*W\s*(\d+(?:\.\d+)?)\s*X\s*H\s*(\d+(?:\.\d+)?)", re.I)
 ITEM_RE = re.compile(r"^\d{3}-\d{6}\(\d+-\d+\)$")          # 341-489933(71-06)
 VOL_RE  = re.compile(r"^\(([\d.]+)\s*M3\)$", re.I)          # (0.059M3)
@@ -275,7 +210,121 @@ def parse_solid_sheet(ws):
         d["qty_boxes"] = qty
         d["size_table"] = []
         designs.append(d)
+    # order: colour first (the leading "09"/"69"/"78"), then size within it,
+    # so pages print 09-003, 09-004, 09-005, 09-006, then 69-..., then 78-...
+    def _key(d):
+        parts = (d["code"] or "").split("-")
+        colour = parts[0] if len(parts) > 0 else ""
+        size = parts[1] if len(parts) > 1 else ""
+        return (colour, size)
+    designs.sort(key=_key)
     return designs
+
+# ----- circle letter (C / D / B) auto-detection from embedded images -----
+def _shape_letter(png_bytes):
+    """Detect B/C/D from the ink SHAPE — no external OCR program needed.
+       C is open on the right; D is closed on the right; B adds a middle bar."""
+    try:
+        from PIL import Image
+        import numpy as np, io
+        im = Image.open(io.BytesIO(png_bytes)).convert("L")
+        a0 = np.array(im) < 100
+        h, w = a0.shape
+        # isolate the glyph inside the surrounding circle/oval ring
+        inner = a0[int(h*0.25):int(h*0.75), int(w*0.25):int(w*0.75)]
+        inner_im = Image.fromarray((~inner * 255).astype('uint8')).resize((60, 60))
+        a = np.array(inner_im) < 128
+        H, W = a.shape
+        right = a[int(H*0.30):int(H*0.70), int(W*0.75):]
+        left  = a[int(H*0.30):int(H*0.70), :int(W*0.25)]
+        mid   = a[int(H*0.42):int(H*0.58), int(W*0.25):int(W*0.75)]
+        is_open_right = right.mean() < 0.12
+        if not is_open_right and mid.mean() > 0.3 and left.mean() > 0.2:
+            return "B"
+        return "C" if is_open_right else "D"
+    except Exception:
+        return None
+
+def _ocr_letter_backup(png_bytes):
+    """Optional OCR check if Tesseract happens to be installed. May return None."""
+    try:
+        import pytesseract
+        from PIL import Image, ImageOps
+        import io
+        im = Image.open(io.BytesIO(png_bytes)).convert("L")
+        w, h = im.size
+        im = im.crop((int(w*0.22), int(h*0.22), int(w*0.78), int(h*0.78)))
+        im = ImageOps.autocontrast(im).resize((120, 120))
+        t = pytesseract.image_to_string(
+            im, config="--psm 10 -c tessedit_char_whitelist=BCD").strip().upper()
+        t = "".join(ch for ch in t if ch in "BCD")
+        return t[0] if t else None
+    except Exception:
+        return None
+
+def _ocr_letter(png_bytes):
+    """Primary = shape detection (no install needed); OCR only breaks ties."""
+    shape = _shape_letter(png_bytes)
+    ocr = _ocr_letter_backup(png_bytes)
+    if shape and ocr and shape == ocr:
+        return shape
+    return shape or ocr
+
+def detect_sheet_letters(path):
+    """Return {sheet_name: 'C'/'D'/'B'} by OCR-ing each sheet's circle image.
+       The circle letter is a small square-ish PNG referenced by that sheet's
+       drawing; we OCR every small image and keep the best letter per sheet."""
+    result = {}
+    try:
+        z = zipfile.ZipFile(path)
+        wb = openpyxl.load_workbook(path, read_only=True)
+        names = wb.sheetnames
+        # count how many drawings reference each media file
+        from collections import Counter
+        _img_usage = Counter()
+        for dn in z.namelist():
+            if re.match(r"xl/drawings/_rels/drawing\d+\.xml\.rels$", dn):
+                for im in re.findall(r'Target="\.\./media/([^"]+)"',
+                                     z.read(dn).decode()):
+                    _img_usage[im] += 1
+        # map worksheetN -> drawingN -> image targets
+        for idx, sname in enumerate(names, start=1):
+            rels = f"xl/worksheets/_rels/sheet{idx}.xml.rels"
+            if rels not in z.namelist():
+                continue
+            drawing = None
+            for m in re.finditer(r'Target="\.\./drawings/(drawing\d+\.xml)"',
+                                 z.read(rels).decode()):
+                drawing = m.group(1)
+            if not drawing:
+                continue
+            drels = f"xl/drawings/_rels/{drawing}.rels"
+            if drels not in z.namelist():
+                continue
+            imgs = re.findall(r'Target="\.\./media/([^"]+)"',
+                              z.read(drels).decode())
+            # The letter is the small PNG that DIFFERS between sheets.
+            # Skip the big logo and the shared handling-symbol jpeg.
+            best = None
+            candidates = [im for im in imgs
+                          if im.lower().endswith(".png")
+                          and f"xl/media/{im}" in z.namelist()
+                          and z.getinfo(f"xl/media/{im}").file_size <= 8000]
+            # prefer a PNG unique to this sheet (not shared by others)
+            from collections import Counter
+            shared = {im for im, cnt in _img_usage.items() if cnt > 1}
+            uniq = [im for im in candidates if im not in shared]
+            ordered = uniq + [im for im in candidates if im in shared]
+            for img in ordered:
+                letter = _ocr_letter(z.read(f"xl/media/{img}"))
+                if letter:
+                    best = letter
+                    break
+            if best:
+                result[sname] = best
+    except Exception:
+        pass
+    return result
 
 def detect_format(wb):
     for sn in wb.sheetnames:
@@ -286,226 +335,80 @@ def detect_format(wb):
 def parse_po(path):
     wb = openpyxl.load_workbook(path, data_only=True)
     fmt = detect_format(wb)
+    sheet_letters = detect_sheet_letters(path)   # {sheet_name: 'C'/'D'/'B'}
     designs = []
     for sn in wb.sheetnames:
         ws = wb[sn]
+        letter = sheet_letters.get(sn)
         try:
             if fmt == "solid":
-                designs += parse_solid_sheet(ws)
+                got = parse_solid_sheet(ws)
             else:
-                designs += parse_ratio_sheet(ws)
+                got = parse_ratio_sheet(ws)
+            for d in got:
+                d["circle_letter"] = letter    # may be None -> fallback later
+            designs += got
         except Exception as e:
             print(f"  WARNING: could not parse sheet '{sn}': {e}")
     return fmt, designs
 
 # ----------------------------------------------------------------------
-# PDF DRAWING
+# PDF ASSEMBLY — page positions only; per-sticker drawing is in the
+# layout_*.py files.
 # ----------------------------------------------------------------------
-def _sw(c, txt, size):
-    """Scaled string width (accounts for TEXT_HSCALE)."""
-    return c.stringWidth(txt, FONT, size) * TEXT_HSCALE / 100.0
+def sheets_for_design(d):
+    """How many printed sheets this design needs.
+       cartons -> stickers (x STICKERS_PER_CARTON) -> sheets (/ copies-per-sheet).
+       Returns (copies_per_sheet, stickers_needed, sheets_needed)."""
+    n = copies_for_height(d["H"] or 999)
+    cartons = d.get("qty_boxes") or 0
+    stickers = cartons * STICKERS_PER_CARTON
+    sheets = math.ceil(stickers / n) if stickers > 0 else 0
+    return n, stickers, sheets
 
-def _text(c, anchor_x, y, txt, size, align="c"):
-    """Draw horizontally-scaled text. align: c=center, r=right, l=left.
-       Returns (left_x, drawn_width)."""
-    wds = _sw(c, txt, size)
-    if align == "c":
-        x0 = anchor_x - wds / 2
-    elif align == "r":
-        x0 = anchor_x - wds
-    else:
-        x0 = anchor_x
-    t = c.beginText(x0, y)
-    t.setFont(FONT, size)
-    t.setHorizScale(TEXT_HSCALE)
-    t.textOut(txt)
-    c.drawText(t)
-    return x0, wds
-
-def draw_sticker(c, x, y, w, h, d, fixed_h=None, show_dest=False,
-                 fixed_w=None, draw_box=False):
-    """Draw one sticker at fixed size, matching the final print layout.
-       fixed_h: dict of exact line heights in inches.
-       fixed_w: dict of exact line widths in inches (text is stretched or
-                compressed horizontally to hit these exactly).
-       show_dest: Phase 3 — print the destination line (e.g. 8411/SG) on top."""
-    pad = 2 * mm
-    c.saveState()
-    if draw_box:
-        c.setLineWidth(0.5)
-        c.rect(x, y, w, h)      # cut box
-    cx = x + w / 2
-
-    n_table = len(d.get("size_table") or [])
-    if fixed_h:
-        F = {k: v * 72.0 for k, v in fixed_h.items()}   # inches -> points
-    else:
-        big = min(h / ((7.2 if show_dest else 6.2) + n_table * 0.95), w / 12, 26)
-        F = {"dest": big, "item": big, "code": big * 0.95,
-             "vol": big, "desc": big}
-    W = {k: v * 72.0 for k, v in (fixed_w or {}).items()}
-
-    def shrink(txt, size, maxw):
-        while size > 5 and c.stringWidth(txt, FONT, size) > maxw:
-            size -= 0.5
-        return size
-
-    def scaled_text(anchor_x, ypos, txt, size, scale, align="c"):
-        """Draw text at exact horizontal scale (percent). Returns (left, width)."""
-        wds = c.stringWidth(txt, FONT, size) * scale / 100.0
-        if align == "c":
-            x0 = anchor_x - wds / 2
-        elif align == "r":
-            x0 = anchor_x - wds
-        else:
-            x0 = anchor_x
-        t = c.beginText(x0, ypos)
-        t.setFont(FONT, size)
-        t.setHorizScale(scale)
-        t.textOut(txt)
-        c.drawText(t)
-        return x0, wds
-
-    def scale_for(key, txt, size):
-        """Percent scale so txt at size hits the exact width W[key]."""
-        if key in W and txt:
-            nat = c.stringWidth(txt, FONT, size)
-            if nat > 0:
-                return max(20, min(160, W[key] / nat * 100.0))
-        return TEXT_HSCALE
-
-    yy = y + h - pad - F["item"] * 1.2
-
-    # Phase 3 only: destination line (e.g. 8411/SG) — centered on top
-    if show_dest and d.get("dest"):
-        fd = F.get("dest", F["item"])
-        sc = scale_for("dest", d["dest"], fd)
-        scaled_text(cx, yy, d["dest"], fd, sc, "c")
-        yy -= F.get("dest", F["item"]) * 1.35
-
-    # Line 1: item number — centered, exact width
-    item = d["item_no"] or ""
-    f1 = F["item"]
-    sc1 = scale_for("item", item, f1)
-    if not fixed_w:
-        f1 = shrink(item, f1, w - 2 * pad)
-    _, iw = scaled_text(cx, yy, item, f1, sc1, "c")
-    item_right = cx + iw / 2
-    yy -= F["code"] * 1.35
-
-    # Line 2: code — right-aligned to the item number's right edge, exact width
-    f2 = F["code"]
-    sc2 = scale_for("code", d["code"] or "", f2)
-    if not fixed_w:
-        f2 = shrink(d["code"] or "", f2, w - 2 * pad)
-    scaled_text(item_right, yy, d["code"] or "", f2, sc2, "r")
-    yy -= F["vol"] * 1.35
-
-    # Ratio size table (left side), if any
-    if d.get("size_table"):
-        th_row = F["code"] * 1.3
-        base = min(w * 0.15, 16 * mm, th_row * 2.2)
-        widths = [base * 1.5] + [base] * (max(len(n) for _, n in d["size_table"]))
-        xs = [x + pad]
-        for wd in widths[:-1]:
-            xs.append(xs[-1] + wd)
-        tfont = min(F["code"] * 0.8, th_row * 0.6)
-        ty = yy + F["vol"] * 0.5
-        c.setLineWidth(0.7)
-        for name, nums in d["size_table"]:
-            vals = [name] + [str(nn) for nn in nums]
-            for j in range(len(widths)):
-                c.rect(xs[j], ty - th_row, widths[j], th_row)
-                txt = vals[j] if j < len(vals) else ""
-                _text(c, xs[j] + widths[j] / 2, ty - th_row + th_row * 0.3,
-                      txt, tfont, "c")
-            ty -= th_row
-        yy = ty - F["vol"] * 1.1
-
-    # Line 3: (volume) circled-letter PCS — right-aligned, exact width of the
-    # "(0.037M3)" part sets the scale for the whole line
-    vol = f"({d['volume'].strip('()') if d['volume'] else ''})"
-    pcs = f"{d['pcs']} PCS" if d["pcs"] else ""
-    L = CIRCLE_LETTER
-    mid = f"{vol}  {L}  {pcs}"
-    f3 = F["vol"]
-    sc3 = scale_for("vol", vol, f3)
-    if not fixed_w:
-        f3 = shrink(mid, f3, w - 2 * pad)
-        right_edge = item_right if fixed_h else             cx + c.stringWidth(mid, FONT, f3) * sc3 / 100 / 2
-    else:
-        right_edge = item_right
-    left_x, total_w = scaled_text(right_edge, yy, mid, f3, sc3, "r")
-    vw = c.stringWidth(vol + "  ", FONT, f3) * sc3 / 100
-    d_center = left_x + vw + c.stringWidth(L, FONT, f3) * sc3 / 100 / 2
-    c.setLineWidth(1.2)
-    c.circle(d_center, yy + f3 * 0.35, f3 * 0.55)
-    yy -= F["desc"] * 1.5
-
-    # Line 4: description — FIXED height, kept WITHIN line 3's span:
-    # never starts before the "(" bracket; compressed in width if too long
-    desc = d["description"] or ""
-    f4 = F["desc"]
-    natural = c.stringWidth(desc, FONT, f4)
-    span_left = left_x
-    span_right = right_edge
-    maxw = span_right - span_left
-    scale = min(TEXT_HSCALE, (maxw / natural) * 100 if natural else 100)
-    wds = natural * scale / 100
-    mid_x = (span_left + span_right) / 2
-    t = c.beginText(mid_x - wds / 2, yy)
-    t.setFont(FONT, f4)
-    t.setHorizScale(scale)
-    t.textOut(desc)
-    c.drawText(t)
-    c.restoreState()
-
-GRID = {8: (2, 4), 4: (2, 2), 2: (1, 2), 1: (1, 1)}  # copies -> (cols, rows)
-inch = 72.0
-
-def generate_pdf(designs, out_path, po_label, show_dest=False):
-    c = canvas.Canvas(out_path, pagesize=PAGE_SIZE)
+def _draw_one_page(c, d, n, show_dest):
     pw, ph = PAGE_SIZE
-    header_h = 8 * mm
+    lay = LAYOUTS.get(n, layout_one)
+    cols, rows = lay.GRID
+    sw = lay.STICKER_W_IN * 72
+    sh = lay.STICKER_H_IN * 72
+    grid_w = cols * sw
+    y_top = ph                      # flush at the very top of the sheet
+    if lay.PLACEMENT == "center":
+        x0 = (pw - grid_w) / 2
+    else:
+        x0 = pw - grid_w - 2 * mm
+    i = 0
+    for r in range(rows):
+        for col in range(cols):
+            x = x0 + col * sw
+            y = y_top - (r + 1) * sh
+            lay.draw(c, x, y, sw, sh, d, show_dest=show_dest)
+            i += 1
+            if i >= n:
+                break
+    lay.page_lines(c, pw, ph, x0, y_top, sw, sh)
+    c.showPage()
+
+def generate_pdf(designs, out_path, po_label, show_dest=False,
+                 one_page_each=False, circle_letter=None):
+    """Generate the sticker PDF.
+       one_page_each=False (default): repeat each design's page as many times
+         as needed to cover its carton quantity; skip zero-qty designs.
+       one_page_each=True: one master page per design (old behaviour)."""
+    default_letter = circle_letter or common.CIRCLE_LETTER
+    c = canvas.Canvas(out_path, pagesize=PAGE_SIZE)
     for d in designs:
-        n = copies_for_height(d["H"] or 999)
-        cols, rows = GRID.get(n, (1, 1))
-        sw_in, sh_in = STICKER_SIZE_IN.get(n, (6.0, 6.0))
-        sw, sh = sw_in * inch, sh_in * inch
-        # page header (info strip — not part of stickers)
-        c.setFont("Helvetica", 8)
-        c.setFillGray(0.35)
-        hdr = (f"PO {po_label}  |  {d['code']}  |  "
-               f"L{d['L']:g} x W{d['W']:g} x H{d['H']:g} cm  ->  {n} copies "
-               f"@ {sw_in:g}\" x {sh_in:g}\" each"
-               + (f"  |  Qty required: {d['qty_boxes']} boxes" if d.get('qty_boxes') else ""))
-        c.drawString(6 * mm, ph - 6 * mm, hdr)
-        c.setFillGray(0)
-        # stickers tile edge-to-edge (cut on shared lines, like the print)
-        gap = 0
-        grid_w = cols * sw + (cols - 1) * gap
-        grid_h = rows * sh + (rows - 1) * gap
-        x0 = pw - grid_w - 2 * mm          # boxes at the RIGHT of the sheet
-        avail_h = ph - header_h
-        y0 = header_h and (avail_h - grid_h) / 2  # center in area below header
-        y_top = ph - header_h - max(0, (avail_h - grid_h) / 2)
-        i = 0
-        for r in range(rows):
-            for col in range(cols):
-                x = x0 + col * (sw + gap)
-                y = y_top - (r + 1) * sh - r * gap
-                fh, fw = None, None
-                if n == 2:
-                    fh = TWO_COPY_LINE_H
-                elif n == 4:
-                    fh, fw = FOUR_COPY_LINE_H, FOUR_COPY_LINE_W
-                draw_sticker(c, x, y, sw, sh, d,
-                             fixed_h=fh, show_dest=show_dest, fixed_w=fw,
-                             draw_box=(n == 4))
-                i += 1
-                if i >= n:
-                    break
-        c.showPage()
+        # per-sheet auto-detected letter wins; else the app/CLI default
+        common.CIRCLE_LETTER = d.get("circle_letter") or default_letter
+        n, stickers, sheets = sheets_for_design(d)
+        if one_page_each:
+            if (d.get("qty_boxes") or 0) <= 0:
+                continue
+            _draw_one_page(c, d, n, show_dest)
+        else:
+            for _ in range(sheets):        # 0 sheets -> skipped automatically
+                _draw_one_page(c, d, n, show_dest)
     c.save()
 
 def write_summary(all_rows, out_path):
@@ -513,22 +416,22 @@ def write_summary(all_rows, out_path):
     ws = wb.active
     ws.title = "Summary"
     hdrs = ["File", "Type", "Code", "Item No", "Description", "PCS",
-            "L", "W", "H", "Volume", "Copies/Sheet", "Qty (boxes)", "Size/Color"]
+            "L", "W", "H", "Volume", "Copies/Sheet", "Qty (boxes)",
+            "Stickers", "Sheets", "Size/Color"]
     ws.append(hdrs)
-    from openpyxl.styles import Font
-    for c in ws[1]:
-        c.font = Font(name="Arial", bold=True)
+    from openpyxl.styles import Font as XFont
+    for cell in ws[1]:
+        cell.font = XFont(name="Arial", bold=True)
     for r in all_rows:
         ws.append(r)
     for row in ws.iter_rows(min_row=2):
-        for c in row:
-            c.font = Font(name="Arial")
-    widths = [26, 8, 12, 20, 34, 6, 6, 6, 6, 10, 12, 11, 16]
+        for cell in row:
+            cell.font = XFont(name="Arial")
+    widths = [26, 8, 12, 20, 34, 6, 6, 6, 6, 10, 12, 11, 9, 8, 16]
     for i, wdt in enumerate(widths, 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = wdt
     wb.save(out_path)
 
-# ----------------------------------------------------------------------
 def main(paths, outdir="."):
     summary = []
     for path in paths:
@@ -538,15 +441,26 @@ def main(paths, outdir="."):
         po_label = next((d["po_no"] for d in designs if d.get("po_no")), name)
         out_pdf = os.path.join(outdir, f"{name}_STICKERS.pdf")
         generate_pdf(designs, out_pdf, po_label)
-        print(f"  -> {out_pdf}")
+        # sheet-count summary
+        tot_cartons = tot_stickers = tot_sheets = 0
+        print(f"  {'design':16}{'cartons':>8}{'stickers':>10}{'sheets':>8}")
+        for d in designs:
+            n, stickers, sheets = sheets_for_design(d)
+            cartons = d.get('qty_boxes') or 0
+            if cartons > 0:
+                print(f"  {str(d['code']):16}{cartons:>8}{stickers:>10}{sheets:>8}")
+            tot_cartons += cartons; tot_stickers += stickers; tot_sheets += sheets
+        print(f"  {'TOTAL':16}{tot_cartons:>8}{tot_stickers:>10}{tot_sheets:>8}")
+        print(f"  -> {out_pdf}  ({tot_sheets} pages)")
         for d in designs:
             n = copies_for_height(d["H"] or 999)
             sc = (f"{d.get('size','')} / {d.get('color_code','')}-{d.get('color_name','')}"
                   if d["type"] == "solid" else
                   ", ".join(f"{s}:{'/'.join(map(str,nums))}" for s, nums in d["size_table"] if s != "TOTAL"))
+            _, stickers, sheets = sheets_for_design(d)
             summary.append([os.path.basename(path), d["type"], d["code"], d["item_no"],
                             d["description"], d["pcs"], d["L"], d["W"], d["H"],
-                            d["volume"], n, d.get("qty_boxes"), sc])
+                            d["volume"], n, d.get("qty_boxes"), stickers, sheets, sc])
     out_x = os.path.join(outdir, "STICKER_SUMMARY.xlsx")
     write_summary(summary, out_x)
     print(f"  -> {out_x}")

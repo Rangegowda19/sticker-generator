@@ -125,6 +125,7 @@ def generate():
         base = os.path.splitext(f.filename)[0]
         out_name = f"{base}_STICKERS_Phase{phase}.pdf"
         out_path = os.path.join(tmpdir, out_name)
+        # circle letter (C/D/B) is auto-detected from each sheet's image
         sg.generate_pdf(designs, out_path, po_label,
                         show_dest=(phase == "3"))
     except Exception as e:
