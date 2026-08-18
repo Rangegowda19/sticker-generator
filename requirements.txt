@@ -3,3 +3,4 @@ openpyxl==3.1.*
 reportlab==4.4.*
 pillow>=10
 numpy>=1.26
+gunicorn==23.*
