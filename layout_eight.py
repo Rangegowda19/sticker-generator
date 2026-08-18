@@ -19,7 +19,7 @@ SHIFT_RIGHT = 0.25
 # Move the whole text block UP inside the sticker (inches). 0 = normal,
 # negative moves it down. Separate value per phase.
 SHIFT_UP_P3 = 0        # Phase 3 (5 lines)
-SHIFT_UP_P2 = 0.10       # Phase 2 (4 lines)
+SHIFT_UP_P2 = 0        # Phase 2 (4 lines)
 
 # Keep the 4-line (Phase 2) spacing IDENTICAL to the 5-line (Phase 3) sticker:
 # the item/code/vol/desc lines sit in their Phase-3 positions and the top
@@ -31,10 +31,10 @@ MATCH_5LINE_SPACING = False
 # ----------------------------------------------------------- text sizes
 # Line WIDTHS are shared by both phases.
 LINE_W = {                 # exact line WIDTHS (inches)
-    "dest": 1.48,         # 8465/EU  (Phase 3 only)
-    "item": 3.16,         # 341-489933(71-06)
-    "code": 1.96,         # 09-004-000
-    "vol":  1.775,         # the "(0.059M3)" part; D + PCS scale with it
+    "dest": 1.38,         # 8465/EU  (Phase 3 only)
+    "item": 3.06,         # 341-489933(71-06)
+    "code": 1.86,         # 09-004-000
+    "vol":  1.675,         # the "(0.059M3)" part; D + PCS scale with it
 }
 
 # ---- PHASE 3 (5 lines) : heights + line spacing ----
@@ -43,18 +43,18 @@ LINE_H_P3 = {              # exact line HEIGHTS (inches)
     "item": 0.262,
     "code": 0.205,
     "vol":  0.263,
-    "desc": 0.475,
+    "desc": 0.325,
 }
-LINE_GAP_P3 = 0.10         # space between lines (inches); None = auto
+LINE_GAP_P3 = 0.165         # space between lines (inches); None = auto
 
 # ---- PHASE 2 (4 lines) : its OWN heights + line spacing ----
 LINE_H_P2 = {              # exact line HEIGHTS (inches)
     "item": 0.385,
     "code": 0.322,
     "vol":  0.323,
-    "desc": 0.625,
+    "desc": 0.385,
 }
-LINE_GAP_P2 = 0.10         # space between lines (inches); None = auto
+LINE_GAP_P2 = 0.15         # space between lines (inches); None = auto
 
 # top/bottom margin inside the sticker, as a fraction of sticker height
 PAD_V_FRACTION = 0.064
@@ -67,6 +67,19 @@ OVAL_RY = 0.64          # half-HEIGHT (x font size)
 # Space on EACH side of the D/C oval on the volume line — THIS sheet only.
 # More spaces = more gap between the oval and the bracket / "16".
 VOL_SEP = " "          # 1 space
+
+
+# ---- PRODUCTION FONT SIZES (points) measured from 4_page_solid.cdr ----
+# These set the actual TEXT size. Line spacing still uses LINE_H_* above.
+FONT_PT_P3 = {"dest": 22.728, "item": 19.975, "code": 19.797, "vol": 19.975, "desc": 27.656}
+FONT_PT_P2 = {"item": 19.975, "code": 19.797, "vol": 19.975, "desc": 27.656}
+LETTER_PT = 20.66   # the D/C letter size (slightly bigger than vol)
+
+
+# ---- PRODUCTION BASELINE GAPS (inches) reverse-engineered from the real sheet.
+# Exact vertical gap between each pair of line baselines (Phase 3).
+# When set, these OVERRIDE the even LINE_GAP spacing for pixel-exact match.
+BASELINE_GAPS_P3 = {"dest_item": 0.395, "item_code": 0.337, "code_vol": 0.368, "vol_desc": 0.596}
 
 # ----------------------------------------------------------- drawing
 def draw(c, x, y, w, h, d, show_dest=False):

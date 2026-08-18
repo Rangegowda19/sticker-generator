@@ -8,7 +8,7 @@ from common import (FONT, TEXT_HSCALE, VOL_SEP,
                     scaled_text, scale_for, draw_oval, vol_line_parts)
 
 # ----------------------------------------------------------- sticker size
-STICKER_W_IN = 4.1
+STICKER_W_IN = 4.0
 STICKER_H_IN = 5.0
 GRID = (2, 2)              # columns x rows on the sheet
 PLACEMENT = "center"       # centered so nothing is clipped
@@ -23,14 +23,14 @@ SHIFT_UP = 0.15
 # Space between lines in the block (inches).
 # Set a number like 0.35 for fixed spacing, or None for automatic
 # (automatic = leftover space divided equally; currently about 0.40").
-LINE_GAP = 0.20
+LINE_GAP = 0.2738
 
 # ----------------------------------------------------------- text sizes
 LINE_W = {                 # exact line WIDTHS (inches)
     "dest": 1.410,         # 8465/EU  (Phase 3 only)
     "item": 3.133,         # 341-489933(71-06)
     "code": 1.800,         # 09-004-000
-    "vol":  1.412,         # the "(0.059M3)" part; D + PCS scale with it
+    "vol":  1.612,         # the "(0.059M3)" part; D + PCS scale with it
 }
 LINE_H = {                 # exact line HEIGHTS (inches)
     "dest": 0.670,
@@ -44,10 +44,33 @@ LINE_H = {                 # exact line HEIGHTS (inches)
 # (0.064 x 5" = 0.32")
 PAD_V_FRACTION = 0.064
 
+# Overall TEXT BLOCK width (inches). The volume line and description are capped
+# to this width so the whole text block matches production (3.136"). Lower =
+# narrower block. This is the width from the left edge of the widest line to the
+# right edge of the item line.
+BLOCK_WIDTH_IN = 3.145
+
+# Pull the VOLUME line UP (closer to the code line) by this many inches.
+# Adjusts the gap between line 3 (code) and line 4 (volume).
+VOL_GAP_ADJUST = 0.110
+
 # Oval around the circle letter — specific to THIS sheet.
 OVAL_LINE_WIDTH = 3.0   # stroke thickness (points)
 OVAL_RX = 0.46          # half-WIDTH  (x font size)
 OVAL_RY = 0.52          # half-HEIGHT (x font size)
+
+
+# ---- PRODUCTION FONT SIZES (points) measured from 4_page_solid.cdr ----
+# These set the actual TEXT size. Line spacing still uses LINE_H_* above.
+FONT_PT_P3 = {"dest": 38.322, "item": 39.949, "code": 39.595, "vol": 39.949, "desc": 59.886}
+FONT_PT_P2 = {"item": 39.949, "code": 39.595, "vol": 39.949, "desc": 59.886}
+LETTER_PT = 40.321   # the D/C letter size (slightly bigger than vol)
+
+
+# ---- PRODUCTION BASELINE GAPS (inches) reverse-engineered from the real sheet.
+# Exact vertical gap between each pair of line baselines (Phase 3).
+# When set, these OVERRIDE the even LINE_GAP spacing for pixel-exact match.
+BASELINE_GAPS_P3 = {"dest_item": 0.859, "item_code": 0.673, "code_vol": 0.736, "vol_desc": 1.184}
 
 # ----------------------------------------------------------- drawing
 def draw(c, x, y, w, h, d, show_dest=False):

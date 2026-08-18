@@ -47,6 +47,19 @@ OVAL_LINE_WIDTH = 3.0   # stroke thickness (points)
 OVAL_RX = 0.46          # half-WIDTH  (x font size)
 OVAL_RY = 0.52          # half-HEIGHT (x font size)
 
+
+# ---- PRODUCTION FONT SIZES (points) measured from 4_page_solid.cdr ----
+# These set the actual TEXT size. Line spacing still uses LINE_H_* above.
+FONT_PT_P3 = {"dest": 91.13, "item": 80.618, "code": 79.904, "vol": 80.618, "desc": 126.355}
+FONT_PT_P2 = {"item": 80.618, "code": 79.904, "vol": 80.618, "desc": 126.355}
+LETTER_PT = 83.386   # the D/C letter size (slightly bigger than vol)
+
+
+# ---- PRODUCTION BASELINE GAPS (inches) reverse-engineered from the real sheet.
+# Exact vertical gap between each pair of line baselines (Phase 3).
+# When set, these OVERRIDE the even LINE_GAP spacing for pixel-exact match.
+BASELINE_GAPS_P3 = {"dest_item": 1.574, "item_code": 1.6, "code_vol": 1.484, "vol_desc": 2.405}
+
 # ----------------------------------------------------------- drawing
 def draw(c, x, y, w, h, d, show_dest=False):
     c.saveState()

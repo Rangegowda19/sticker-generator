@@ -14,7 +14,7 @@ GRID = (1, 2)              # columns x rows on the sheet
 PLACEMENT = "right"
 
 # Right shift of the text block inside each sticker (inches). 0 = centered.
-SHIFT_RIGHT = 0.35
+SHIFT_RIGHT = 0.15
 
 # Move the whole text block UP inside the sticker (inches). 0 = normal,
 # negative moves it down. Separate value per phase.
@@ -38,13 +38,13 @@ LINE_W = {                 # exact line WIDTHS (inches)
 
 # ---- PHASE 3 (5 lines) : heights + line spacing ----
 LINE_H_P3 = {              # exact line HEIGHTS (inches)
-    "dest": 0.68,
+    "dest": 0.53,
     "item": 0.56,
     "code": 0.46,
     "vol":  0.63,
-    "desc": 0.9,
+    "desc": 0.7,
 }
-LINE_GAP_P3 = 0.20         # space between lines (inches); None = auto
+LINE_GAP_P3 = None         # space between lines (inches); None = auto
 
 # ---- PHASE 2 (4 lines) : its OWN heights + line spacing ----
 LINE_H_P2 = {              # exact line HEIGHTS (inches)
@@ -53,7 +53,7 @@ LINE_H_P2 = {              # exact line HEIGHTS (inches)
     "vol":  0.63,
     "desc": 0.7,
 }
-LINE_GAP_P2 = 0.15         # space between lines (inches); None = auto
+LINE_GAP_P2 = None         # space between lines (inches); None = auto
 
 # top/bottom margin inside the sticker, as a fraction of sticker height
 PAD_V_FRACTION = 0.064
@@ -62,6 +62,19 @@ PAD_V_FRACTION = 0.064
 OVAL_LINE_WIDTH = 3.0   # stroke thickness (points)
 OVAL_RX = 0.46          # half-WIDTH  (x font size)
 OVAL_RY = 0.52          # half-HEIGHT (x font size)
+
+
+# ---- PRODUCTION FONT SIZES (points) measured from 4_page_solid.cdr ----
+# These set the actual TEXT size. Line spacing still uses LINE_H_* above.
+FONT_PT_P3 = {"dest": 45.157, "item": 39.948, "code": 39.594, "vol": 39.948, "desc": 62.612}
+FONT_PT_P2 = {"item": 39.948, "code": 39.594, "vol": 39.948, "desc": 62.612}
+LETTER_PT = 41.321   # the D/C letter size (slightly bigger than vol)
+
+
+# ---- PRODUCTION BASELINE GAPS (inches) reverse-engineered from the real sheet.
+# Exact vertical gap between each pair of line baselines (Phase 3).
+# When set, these OVERRIDE the even LINE_GAP spacing for pixel-exact match.
+BASELINE_GAPS_P3 = {"dest_item": 0.78, "item_code": 0.793, "code_vol": 0.736, "vol_desc": 1.192}
 
 # ----------------------------------------------------------- drawing
 def draw(c, x, y, w, h, d, show_dest=False):
